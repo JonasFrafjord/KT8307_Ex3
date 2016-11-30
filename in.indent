@@ -1,0 +1,120 @@
+#
+# Nanomechanics exercise 3
+#
+# 2d indenter simulation
+#
+
+# Chooses the units for the system. Full unit list is written in the manual
+units metal
+#Setting the boundary conditions, where s is a shrinkwraped boundary condition
+    #A shrinkwraped BC is a force interaction from the boundaries/walls which 
+    #makes the walls able to expand. P is periodic boundary conditions
+boundary p s p
+
+#Atomic style atomic determines which properties are communicated
+atom_style atomic
+#Creates a list by binning, with 0.3Å cutoff
+neighbor 0.3 bin
+#Update neighbor list every 5 timestep
+neigh_modify delay 5
+
+#
+# create geometry
+# Chooses the unit cell as fcc, with lattice constant and orientation of atoms
+lattice fcc 3.6150
+#Sets a box, which will be scaled to the lattice spacing
+region BOX block 0 20 0 10 -2 +2
+#Create a box which contains 1 atomtype
+create_box 1 BOX
+#Fills the box with atoms on the matrix
+create_atoms 1 box
+
+#
+# Cu EAM potential
+#
+#Chooses the Embedded-atom-model as the interacting potential between atoms
+pair_style eam
+#Chooses an input file where the potential is defined. Gives cut-off distance,
+    #and the remaining parameters which must be defined for the EAM potential.
+pair_coeff * * Cu_u6.eam
+
+#
+# minimize energy
+#
+# Print to log.lammps every 100 timestep
+thermo 100
+# Print the following
+thermo_style custom step temp etotal pe ke press pxx pyy pzz lx ly lz
+# Can only relax x and z direction when minimizing energy
+fix 0 all box/relax x 1.0 z 1.0
+#minimise using only max iterations and evaluations
+minimize 0. 0. 10000 100000
+#deletes the fix with ID=0
+unfix 0
+
+#
+# initial velocities & equilibration.
+#
+# Initial velocities from a Maxwell distribution for the specified temperature
+# Using the temperature 10K and seed 482748, find the velocity
+velocity all create 10.0 482748
+#Update position and velocity, external temp start and stop is both at 10K
+    # x a b c, is values in x external stress start stop, then c=stress damping
+fix 1 all npt temp 10. 10. 0.010 x 1.0 1.0 0.1 z 1.0 1.0 0.1
+# Use an harmonic spring potential to determine the atomic interaction with
+    # the walls, at upper and lower wall of indentation direction
+fix 2 all wall/harmonic ylo -0.25 100000. 1.0 0.5
+fix 3 all wall/harmonic yhi 10.20 100000. 1.0 0.5
+
+#
+# equilibration
+#
+log log.equil #output
+timestep 0.001 #0.001ps timestep
+dump 1 all atom 1000 dump.equil #dump to dump.equil every 1000
+run 10000
+
+
+#minimise using tolerance for energy and force, in addition to max iterations
+    # and evaluations
+minimize 1e-4 1e-5 1000 10000
+
+#Delete fix 3
+unfix 3
+run 20000
+
+undump 1
+#delete dump ID=1
+
+#
+# loading by an indenter
+#
+log log.indent #output
+reset_timestep 0 #reset steps
+variable k equal 1000.0/xlat #force parameter in the cylindrical indenter
+#s is used to scale the speed of the indenter
+variable s equal 0.02
+#Change position of indenter
+variable y equal "15.0*ylat - step*dt*v_s*ylat"
+variable maxstep equal 200000
+
+#This will update the position of the indenter, as well as the force it feels
+fix 4 all indent $k cylinder z 10 v_y 5.0
+
+#print every 1000 timestep
+thermo 1000
+# & is a continuation sign for the next line.
+#What to print
+thermo_style custom step temp etotal pe ke press pxx pyy pzz &
+    lx ly lz v_y f_4 f_4[1] f_4[2] f_4[3]
+
+dump 1 all atom 1000 dump.indent
+run ${maxstep}
+
+#
+# unloading the indenter
+#
+variable y equal "15.0*ylat - (2*v_maxstep-step)*dt*v_s*ylat"
+run ${maxstep}
+
+
